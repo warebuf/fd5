@@ -32,16 +32,16 @@
 
   // ---------- card templates ----------
   const TEMPLATES = {
-    warrior: { key:'warrior', name:'Vanguard',     cost:2, atk:2, hp:2, type:'melee',  glyph:'blade',
-      ability:{ name:'Rally Cry', cost:1, desc:'+1 Atk until your next turn', target:'none',    effect:'rally' } },
-    tank:    { key:'tank',    name:'Bastion',       cost:3, atk:1, hp:5, type:'guard',  glyph:'shield',
-      ability:{ name:'Mend',      cost:2, desc:'Heal 2 on a friendly unit',    target:'friendly', effect:'mend'  } },
-    mage:    { key:'mage',    name:'Cinderwright',  cost:3, atk:3, hp:2, type:'arcane', glyph:'flame',
-      ability:{ name:'Scorch',    cost:2, desc:'Deal 2 to an enemy unit or general', target:'enemy', effect:'scorch'} },
-    healer:  { key:'healer',  name:'Wellspring',    cost:2, atk:2, hp:3, type:'sacred', glyph:'drop',
-      ability:{ name:'Soothe',    cost:1, desc:'Heal 1 on itself',             target:'none',    effect:'soothe'} },
-    brute:   { key:'brute',   name:'Ironclad',      cost:4, atk:4, hp:4, type:'brute',  glyph:'spike',
-      ability:{ name:'Rage',      cost:2, desc:'+2 Atk, permanently',          target:'none',    effect:'rage'  } }
+    warrior: { key:'warrior', name:'Vanguard',     cost:50,  atk:2, hp:2, type:'melee',  glyph:'blade',
+      ability:{ name:'Rally Cry', cost:25, desc:'+1 Atk until your next turn', target:'none',    effect:'rally' } },
+    tank:    { key:'tank',    name:'Bastion',       cost:75,  atk:1, hp:5, type:'guard',  glyph:'shield',
+      ability:{ name:'Mend',      cost:50, desc:'Heal 2 on a friendly unit',    target:'friendly', effect:'mend'  } },
+    mage:    { key:'mage',    name:'Cinderwright',  cost:75,  atk:3, hp:2, type:'arcane', glyph:'flame',
+      ability:{ name:'Scorch',    cost:50, desc:'Deal 2 to an enemy unit or general', target:'enemy', effect:'scorch'} },
+    healer:  { key:'healer',  name:'Wellspring',    cost:50,  atk:2, hp:3, type:'sacred', glyph:'drop',
+      ability:{ name:'Soothe',    cost:25, desc:'Heal 1 on itself',             target:'none',    effect:'soothe'} },
+    brute:   { key:'brute',   name:'Ironclad',      cost:100, atk:4, hp:4, type:'brute',  glyph:'spike',
+      ability:{ name:'Rage',      cost:50, desc:'+2 Atk, permanently',          target:'none',    effect:'rage'  } }
   };
   const TYPE_COLOR = { melee:COLOR.p1, guard:COLOR.mana, arcane:COLOR.p2, sacred:COLOR.good, brute:COLOR.danger };
 
@@ -62,13 +62,13 @@
   }
 
   // ---------- game state ----------
-  const MAX_BOARD = 6, MAX_HAND = 8, DECK_SIZE = 15, MAX_MANA = 10, GENERAL_HP = 30;
+  const MAX_BOARD = 6, MAX_HAND = 8, DECK_SIZE = 15, MANA_REGEN = 100, DRAW_COST = 25, GENERAL_HP = 30;
 
   function makePlayer(idx, name, color, dim){
     return {
       idx, name, color, dim,
       general:{ hp:GENERAL_HP, maxHp:GENERAL_HP },
-      mana:0, maxMana:0,
+      mana:0,
       deck:buildDeck(),
       hand:[],
       board:[]
@@ -104,10 +104,9 @@
 
   function startTurn(idx){
     const p = state.players[idx];
-    p.maxMana = Math.min(MAX_MANA, p.maxMana+1);
-    p.mana = p.maxMana;
+    p.mana += MANA_REGEN;
     p.board.forEach(u=>{ u.sickness=false; u.attacked=false; u.tempAtk=0; });
-    log(`${p.name}'s turn begins — mana ${p.mana}/${p.maxMana}.`);
+    log(`${p.name}'s turn begins — gains ${MANA_REGEN} mana (now ${p.mana}).`);
   }
 
   function initGame(){
@@ -162,13 +161,13 @@
   function drawForPlayer(idx){
     const p = state.players[idx];
     if(idx!==state.turnPlayer) return;
-    if(p.mana < 1) return;
+    if(p.mana < DRAW_COST) return;
     if(p.hand.length >= MAX_HAND) return;
     if(p.deck.length === 0) return;
-    p.mana -= 1;
+    p.mana -= DRAW_COST;
     const card = p.deck.pop();
     p.hand.push(card);
-    log(`${p.name} draws ${card.name} (1 mana).`);
+    log(`${p.name} draws ${card.name} (${DRAW_COST} mana).`);
   }
 
   function beginAbility(ownerIdx, uid){
@@ -192,11 +191,11 @@
     p.mana -= ab.cost;
     switch(ab.effect){
       case 'rally': unit.tempAtk += 1; log(`${p.name}'s ${unit.name} rallies (+1 Atk).`); break;
-      case 'soothe': unit.hp = Math.min(unit.maxHp, unit.hp+1); log(`${p.name}'s ${unit.name} soothes itself (+1 HP).`); break;
+      case 'soothe': unit.hp += 1; log(`${p.name}'s ${unit.name} soothes itself (+1 HP).`); break;
       case 'rage': unit.atk += 2; log(`${p.name}'s ${unit.name} rages (+2 Atk, permanent).`); break;
       case 'mend': {
         const t = target && target.kind==='unit' ? findUnit(target.owner, target.uid) : null;
-        if(t){ t.hp = Math.min(t.maxHp, t.hp+2); log(`${p.name}'s ${unit.name} mends ${t.name} (+2 HP).`); }
+        if(t){ t.hp += 2; log(`${p.name}'s ${unit.name} mends ${t.name} (+2 HP).`); }
         break;
       }
       case 'scorch': {
@@ -431,31 +430,32 @@
     ctx.stroke();
     if(dim){ ctx.save(); ctx.globalAlpha=0.42; }
 
-    // cost badge
-    manaCrystal(x+16,y+16,10, true);
-    ctx.font = "700 11px 'JetBrains Mono'";
-    ctx.fillStyle = '#0d1016';
-    ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(card.cost, x+16, y+17);
-
     // name
     ctx.font = "600 11px 'Spectral SC'";
     ctx.fillStyle = COLOR.text;
+    ctx.textAlign='center'; ctx.textBaseline='middle';
     wrapText(card.name, x+CARD_W/2, y+16, CARD_W-14, 12, 2, 'center');
 
     // glyph
     ctx.fillStyle = TYPE_COLOR[card.type];
-    glyphPath(card.type, x+CARD_W/2, y+52, 15);
+    glyphPath(card.type, x+CARD_W/2, y+48, 14);
     ctx.fill();
 
-    // stats
+    // stats row: attack — cost — health
+    const statY = y+CARD_H-13;
     ctx.font = "700 12px 'JetBrains Mono'";
     ctx.textAlign='left';
     ctx.fillStyle = COLOR.p1;
-    ctx.fillText('⚔'+card.atk, x+9, y+CARD_H-11);
+    ctx.fillText('⚔'+card.atk, x+9, statY);
     ctx.textAlign='right';
     ctx.fillStyle = COLOR.danger;
-    ctx.fillText(card.hp+'♥', x+CARD_W-9, y+CARD_H-11);
+    ctx.fillText(card.hp+'♥', x+CARD_W-9, statY);
+
+    manaCrystal(x+CARD_W/2,statY,11, true);
+    ctx.font = (String(card.cost).length>2 ? "700 9px" : "700 11px") + " 'JetBrains Mono'";
+    ctx.fillStyle = '#0d1016';
+    ctx.textAlign='center';
+    ctx.fillText(card.cost, x+CARD_W/2, statY+1);
 
     if(dim) ctx.restore();
   }
@@ -705,22 +705,26 @@
       pushHit(barX-4,barY-4,barW+8,barH+8,()=> resolveAbilityTarget('face', idx, null));
     }
 
-    // mana crystals
-    const manaY = y+52;
-    for(let i=0;i<p.maxMana;i++){
-      manaCrystal(x+18+i*15, manaY, 6, i<p.mana);
-    }
-    ctx.font="600 10px 'JetBrains Mono'";
-    ctx.fillStyle=COLOR.textDim;
+    // mana — unbounded, so shown as a tallied count rather than a fixed row of pips
+    const manaY = y+54;
+    manaCrystal(x+24, manaY, 9, true);
+    ctx.textBaseline='middle';
+    ctx.font="700 16px 'JetBrains Mono'";
+    ctx.fillStyle=COLOR.text;
     ctx.textAlign='left';
-    ctx.fillText(p.mana+'/'+p.maxMana+' mana', x+18+Math.max(p.maxMana,1)*15+6, manaY+4);
+    const manaLabel = String(p.mana);
+    ctx.fillText(manaLabel, x+40, manaY+1);
+    ctx.font="600 10.5px 'Manrope'";
+    ctx.fillStyle=COLOR.textDim;
+    ctx.fillText('mana banked', x+40+ctx.measureText(manaLabel).width+8, manaY+2);
+    ctx.textBaseline='alphabetic';
 
     ctx.font="600 10.5px 'Manrope'";
     ctx.fillStyle=COLOR.textFaint;
     ctx.fillText('Deck '+p.deck.length+'  ·  Hand '+p.hand.length+'/'+MAX_HAND, x+14, y+h-14);
 
-    const drawEnabled = isTurn && p.mana>=1 && p.hand.length<MAX_HAND && p.deck.length>0;
-    const r = drawButton(x+w-78, y+h-32, 64, 22, 'Draw', {accent:COLOR.mana, sub:'1 mana', enabled:drawEnabled});
+    const drawEnabled = isTurn && p.mana>=DRAW_COST && p.hand.length<MAX_HAND && p.deck.length>0;
+    const r = drawButton(x+w-78, y+h-32, 64, 22, 'Draw', {accent:COLOR.mana, sub:DRAW_COST+' mana', enabled:drawEnabled});
     if(drawEnabled) pushHit(r.x,r.y,r.w,r.h, ()=> drawForPlayer(idx));
   }
 
@@ -768,8 +772,11 @@
 
     const ab = entity.ability;
     ctx.font="600 10.5px 'Manrope'";
+    ctx.fillStyle=COLOR.mana;
+    ctx.fillText(`${ab.name} · ${ab.cost} mana`, infoX, tileY+50);
+    ctx.font="500 10.5px 'Manrope'";
     ctx.fillStyle=COLOR.textDim;
-    wrapText(`${ab.name} — ${ab.desc}`, infoX, tileY+50, w-(infoX-x)-14, 13, 4, 'left');
+    wrapText(ab.desc, infoX, tileY+64, w-(infoX-x)-14, 13, 3, 'left');
 
     const by = tileY + CARD_H + 16;
     const isOwnTurn = sel.owner===state.turnPlayer && !state.gameOver;

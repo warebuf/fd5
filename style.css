@@ -30,7 +30,7 @@ body{
   flex-direction:column;
   align-items:center;
   min-height:100vh;
-  padding:18px 14px 26px;
+  padding:8px;
 }
 canvas{
   display:block;
