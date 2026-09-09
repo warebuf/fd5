@@ -33,16 +33,22 @@
   // ---------- roster ----------
   const ROSTER = [
     { key:'vanguard',    name:'Vanguard',    atk:3, hp:4, glyph:'melee',
+      short:'Hits earliest unresolved enemy',
       action:'Attacks the enemy in the earliest unresolved slot.' },
     { key:'blacksmith',  name:'Blacksmith',  atk:1, hp:4, glyph:'hammer',
+      short:'Next ally in line gets +3 ATK',
       action:'Gives the next allied unit in the sequence +3 ATK this round.' },
     { key:'assassin',    name:'Assassin',    atk:4, hp:2, glyph:'arcane',
+      short:'Hits latest unresolved enemy',
       action:'Attacks the enemy in the latest unresolved slot.' },
     { key:'guardian',    name:'Guardian',    atk:1, hp:6, glyph:'guard',
+      short:'Next ally to act is immune',
       action:'The next allied unit to act takes no damage until its action.' },
     { key:'medic',       name:'Medic',       atk:1, hp:3, glyph:'sacred',
+      short:'Heals worst-hurt ally 3, then hits',
       action:'Heals the most damaged ally for 3, then attacks.' },
     { key:'executioner', name:'Executioner', atk:2, hp:4, glyph:'axe',
+      short:'Hits worst-hurt enemy, +3 if hurt',
       action:'Attacks the most damaged enemy; +3 damage if it is already injured.' }
   ];
   const BY_KEY = {};
@@ -64,8 +70,9 @@
     ready:[false,false],
     picked:null,         // roster key held in the palette
     simIndex:0,
-    auto:true,
-    focus:null,          // {actor:slotIdx, target:slotIdx|null}
+    auto:false,          // step through by hand; Auto is opt-in
+    focus:null,          // {actor:slotIdx, target:slotIdx|null, kind}
+    explain:null,        // breakdown of the action on screen
     roundResult:null,    // {winner|null, why}
     matchWinner:null,
     log:[]
@@ -124,9 +131,24 @@
   }
 
   // ---------- resolution ----------
+  // Every action records which units it weighed and which it picked, so the
+  // sequence can be stepped through and read back.
+  function out(text, color){
+    log('    ' + text, color);
+    if(state.explain) state.explain.outcome.push({ text, color: color || COLOR.textDim });
+  }
+
+  function weighed(list, chosen, noteFn){
+    return list.map(x=>({
+      slot:x.slot, name:x.name, owner:x.owner,
+      note: noteFn ? noteFn(x) : '',
+      chosen: !!chosen && x.uid === chosen.uid
+    }));
+  }
+
   function dealDamage(target, amount){
     if(target.immune){
-      log('    ' + target.name + ' is shielded — no damage.', COLOR.mana);
+      out(target.name + ' is shielded — no damage.', COLOR.mana);
       return;
     }
     target.hp -= amount;
@@ -134,72 +156,109 @@
     if(target.hp <= 0){
       target.hp = 0;
       target.dead = true;
-      log('    ' + target.name + ' (slot ' + (target.slot+1) + ') dies.', COLOR.danger);
+      out(target.name + ' (slot ' + (target.slot+1) + ') dies.', COLOR.danger);
     }
   }
 
   function attack(u, target, amount, verb){
-    if(!target){ log('    no target — the action fizzles.', COLOR.textFaint); return; }
+    if(!target){ out('no target — the action fizzles.', COLOR.textFaint); return; }
     state.focus.target = target.slot;
-    log('    ' + verb + ' ' + target.name + ' (slot ' + (target.slot+1) + ') for ' + amount + '.', pcolor(u.owner));
+    state.focus.kind = 'hit';
+    out(verb + ' ' + target.name + ' (slot ' + (target.slot+1) + ') for ' + amount + '.', pcolor(u.owner));
     dealDamage(target, amount);
   }
 
   function resolveUnit(u){
     u.immune = false; // protection lasts only until this unit's own action
-    state.focus = { actor:u.slot, target:null };
+    state.focus = { actor:u.slot, target:null, kind:'hit' };
+    const e = state.explain = { actor:u, rule:'', pool:'', weighed:[], outcome:[], accent:COLOR.danger };
     log('Slot ' + (u.slot+1) + ' — ' + pname(u.owner) + "'s " + u.name + ' acts.', pcolor(u.owner));
 
     switch(u.key){
-      case 'vanguard':
-        attack(u, earliestUnresolvedEnemy(u), atkOf(u), 'strikes');
+      case 'vanguard': {
+        const es = enemiesOf(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Hits the enemy in the EARLIEST unresolved slot — denying an action that has not happened yet.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'strikes');
         break;
+      }
 
-      case 'assassin':
-        attack(u, latestUnresolvedEnemy(u), atkOf(u), 'strikes the latest unresolved,');
+      case 'assassin': {
+        const es = enemiesOf(u.owner);
+        const un = es.filter(x=>!x.acted);
+        const t = (un.length ? un[un.length-1] : es[es.length-1]) || null;
+        e.rule = 'Hits the enemy in the LATEST unresolved slot — reaching past the front line to kill a late payoff.';
+        e.pool = 'living enemies, highest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'strikes the latest unresolved,');
         break;
+      }
 
       case 'executioner': {
-        const wounded = mostDamaged(enemiesOf(u.owner));
-        if(wounded) attack(u, wounded, atkOf(u)+3, 'executes the wounded');
-        else attack(u, earliestUnresolvedEnemy(u), atkOf(u), 'finds nobody wounded and strikes');
+        const es = enemiesOf(u.owner);
+        const wounded = mostDamaged(es);
+        const t = wounded || es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Hits the MOST DAMAGED enemy, for +3 if it is already injured. Wants damage dealt earlier in the sequence.';
+        e.pool = wounded ? 'wounded enemies' : 'nobody is wounded — falls back to the earliest slot, no bonus';
+        e.weighed = weighed(es, t, x=>missing(x) ? ('hurt −' + missing(x) + ' HP') : 'unhurt');
+        attack(u, t, atkOf(u) + (wounded ? 3 : 0), wounded ? 'executes the wounded' : 'finds nobody wounded and strikes');
         break;
       }
 
       case 'blacksmith': {
-        const a = nextAlly(u, false);
+        const pool = state.slots.filter(x=>isAlive(x) && x.owner===u.owner && x.slot > u.slot);
+        const a = pool[0] || null;
+        e.accent = COLOR.good;
+        e.rule = 'Gives the NEXT allied unit in the sequence +3 ATK for this round. Setup that only pays off if an ally acts later.';
+        e.pool = 'living allies in later slots';
+        e.weighed = weighed(pool, a, x=>'slot ' + (x.slot+1));
         if(a){
           a.buff += 3;
           state.focus.target = a.slot;
-          log('    forges +3 ATK onto ' + a.name + ' (slot ' + (a.slot+1) + ') for this round.', COLOR.good);
+          state.focus.kind = 'buff';
+          out('forges +3 ATK onto ' + a.name + ' (slot ' + (a.slot+1) + ') — now ' + atkOf(a) + ' ATK.', COLOR.good);
         } else {
-          log('    no ally later in the sequence — the buff is wasted.', COLOR.textFaint);
+          out('no ally later in the sequence — the buff is wasted.', COLOR.textFaint);
         }
         break;
       }
 
       case 'guardian': {
-        const a = nextAlly(u, true);
+        const pool = state.slots.filter(x=>isAlive(x) && x.owner===u.owner && x.slot > u.slot && !x.acted);
+        const a = pool[0] || null;
+        e.accent = COLOR.mana;
+        e.rule = 'The NEXT allied unit to act takes no damage until its own action. Carries a fragile piece to its slot.';
+        e.pool = 'living allies still to act';
+        e.weighed = weighed(pool, a, x=>'slot ' + (x.slot+1));
         if(a){
           a.immune = true;
           state.focus.target = a.slot;
-          log('    shields ' + a.name + ' (slot ' + (a.slot+1) + ') until it acts.', COLOR.mana);
+          state.focus.kind = 'shield';
+          out('shields ' + a.name + ' (slot ' + (a.slot+1) + ') until it acts.', COLOR.mana);
         } else {
-          log('    no ally left to shield.', COLOR.textFaint);
+          out('no ally left to shield.', COLOR.textFaint);
         }
         break;
       }
 
       case 'medic': {
-        const a = mostDamaged(aliveOf(u.owner)); // includes itself
+        const allies = aliveOf(u.owner);
+        const a = mostDamaged(allies); // itself counts as an ally
+        e.accent = COLOR.good;
+        e.rule = 'Heals the MOST DAMAGED ally for 3 (itself included), then attacks. Wants to act after the enemy has dealt damage.';
+        e.pool = 'living allies';
+        e.weighed = weighed(allies, a, x=>missing(x) ? ('hurt −' + missing(x) + ' HP') : 'unhurt');
         if(a){
           const before = a.hp;
           a.hp = Math.min(a.maxHp, a.hp + 3);
           a.healFlash = 1;
           state.focus.target = a.slot;
-          log('    heals ' + a.name + ' (slot ' + (a.slot+1) + ') for ' + (a.hp-before) + '.', COLOR.good);
+          state.focus.kind = 'heal';
+          out('heals ' + a.name + ' (slot ' + (a.slot+1) + ') for ' + (a.hp-before) + '.', COLOR.good);
         } else {
-          log('    nobody is wounded — no heal.', COLOR.textFaint);
+          out('nobody is wounded — no heal.', COLOR.textFaint);
         }
         attack(u, earliestUnresolvedEnemy(u), atkOf(u), 'then strikes');
         break;
@@ -215,7 +274,10 @@
       state.simIndex++;
       if(!u) continue; // empty slot, nothing to resolve
       if(u.dead){
-        state.focus = { actor:u.slot, target:null };
+        state.focus = { actor:u.slot, target:null, kind:'hit' };
+        state.explain = { actor:u, skipped:true, accent:COLOR.danger, weighed:[], outcome:[],
+          rule:'Killed before its slot came up, so its action never happens. This is what winning the sequence buys you.',
+          pool:'' };
         log('Slot ' + (u.slot+1) + ' — ' + u.name + ' is dead and never acts.', COLOR.textFaint);
         return;
       }
@@ -228,6 +290,7 @@
   function endRound(){
     state.phase = 'roundEnd';
     state.focus = null;
+    state.explain = null;
     const a0 = aliveOf(0), a1 = aliveOf(1);
     const hp0 = a0.reduce((s,u)=>s+u.hp,0), hp1 = a1.reduce((s,u)=>s+u.hp,0);
     let winner = null, why;
@@ -260,6 +323,7 @@
     state.picked = null;
     state.simIndex = 0;
     state.focus = null;
+    state.explain = null;
     state.roundResult = null;
     state.phase = 'stage';
     log('');
@@ -274,6 +338,7 @@
     state.picked = null;
     state.simIndex = 0;
     state.focus = null;
+    state.explain = null;
     state.roundResult = null;
     state.matchWinner = null;
     state.phase = 'stage';
@@ -380,12 +445,13 @@
 
   // ---------- layout ----------
   const M = 14;
-  const RAIL_Y = 82, SLOT_W = 110, SLOT_H = 168, SLOT_GAP = 19;
-  const BAND_Y = RAIL_Y + SLOT_H + 16;   // 266 — ready / sim controls
+  const ARROW_Y = 90;                    // lane for the actor -> target arc
+  const RAIL_Y = 96, SLOT_W = 110, SLOT_H = 158, SLOT_GAP = 19;
+  const BAND_Y = RAIL_Y + SLOT_H + 14;   // 268 — ready / sim controls
   const BAND_H = 40;
-  const PANEL_Y = BAND_Y + BAND_H + 26;  // 332 — palette or scoreboard
+  const PANEL_Y = BAND_Y + BAND_H + 22;  // 330 — palette, readout or scoreboard
   const PANEL_H = 132;
-  const LOG_Y = PANEL_Y + PANEL_H + 14;  // 478
+  const LOG_Y = PANEL_Y + PANEL_H + 14;  // 476
   const LOG_H = LH - LOG_Y - M;
 
   let hitRegions = [];
@@ -486,8 +552,8 @@
     else if(resolved) ctx.globalAlpha = 0.62;
 
     // glyph
-    const cx = x + SLOT_W/2, gy = y + 50;
-    glyphPath(u.glyph, cx, gy, 15);
+    const cx = x + SLOT_W/2, gy = y + 46;
+    glyphPath(u.glyph, cx, gy, 14);
     ctx.fillStyle = col;
     ctx.globalAlpha *= 0.28;
     ctx.fill();
@@ -499,17 +565,17 @@
     ctx.font = "700 12px 'Manrope'";
     ctx.fillStyle = COLOR.text;
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
-    ctx.fillText(u.name, cx, y+84);
+    ctx.fillText(u.name, cx, y+78);
 
     // stats
     const pw = 42;
-    statPill(cx-pw-3, y+92, pw, 18, 'A', atkOf(u), u.buff ? COLOR.good : COLOR.textDim);
-    statPill(cx+3,    y+92, pw, 18, 'H', u.hp,     missing(u) ? COLOR.danger : COLOR.textDim);
+    statPill(cx-pw-3, y+86, pw, 18, 'A', atkOf(u), u.buff ? COLOR.good : COLOR.textDim);
+    statPill(cx+3,    y+86, pw, 18, 'H', u.hp,     missing(u) ? COLOR.danger : COLOR.textDim);
 
     // action reminder
     ctx.font = "500 9.5px 'Manrope'";
     ctx.fillStyle = COLOR.textFaint;
-    wrapText(BY_KEY[u.key].action, cx, y+124, SLOT_W-14, 11, 3, 'center');
+    wrapText(BY_KEY[u.key].short, cx, y+118, SLOT_W-14, 11, 3, 'center');
     ctx.restore();
 
     // status badges
@@ -617,14 +683,33 @@
     }
 
     if(state.phase==='sim'){
-      drawButton(M, BAND_Y, 120, BAND_H, state.auto ? 'Pause' : 'Auto',
-        { accent:COLOR.mana, onClick:()=>{ state.auto = !state.auto; } });
-      drawButton(M+130, BAND_Y, 120, BAND_H, 'Step',
-        { accent:COLOR.text, enabled:!state.auto, onClick:()=>stepSim() });
-      ctx.font = "700 13px 'Manrope'";
-      ctx.fillStyle = COLOR.text;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText('Resolving slot ' + Math.min(state.simIndex, SLOTS) + ' of ' + SLOTS, LW/2, BAND_Y+BAND_H/2);
+      let nx = -1;
+      for(let i=state.simIndex;i<SLOTS;i++){ if(state.slots[i]){ nx = i; break; } }
+      const done = state.simIndex >= SLOTS;
+      drawButton(M, BAND_Y, 150, BAND_H, done ? 'Finish round' : 'Step  ▸',
+        { accent:COLOR.mana, solid:true, onClick:()=>stepSim() });
+      drawButton(M+160, BAND_Y, 108, BAND_H, state.auto ? 'Auto ▮▮' : 'Auto ▶',
+        { accent:state.auto ? COLOR.mana : COLOR.line, onClick:()=>{ state.auto = !state.auto; } });
+
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      const my = BAND_Y + BAND_H/2;
+      if(nx >= 0){
+        const nu = state.slots[nx];
+        ctx.font = "600 12px 'Manrope'";
+        ctx.fillStyle = COLOR.textFaint;
+        ctx.fillText('next', M+284, my);
+        ctx.font = "700 13px 'Manrope'";
+        ctx.fillStyle = pcolor(nu.owner);
+        ctx.fillText('slot ' + (nx+1) + ' — ' + pname(nu.owner) + "'s " + nu.name + (nu.dead ? '  (dead, skipped)' : ''), M+318, my);
+      } else {
+        ctx.font = "700 13px 'Manrope'";
+        ctx.fillStyle = COLOR.textDim;
+        ctx.fillText('Sequence complete.', M+284, my);
+      }
+      ctx.textAlign = 'right';
+      ctx.font = "700 12px 'JetBrains Mono'";
+      ctx.fillStyle = COLOR.textFaint;
+      ctx.fillText(Math.min(state.simIndex, SLOTS) + ' / ' + SLOTS + ' resolved  ·  space to step', LW-M, my);
       return;
     }
 
@@ -691,7 +776,139 @@
     });
   }
 
-  // ---------- scoreboard (sim / end) ----------
+  // ---------- action readout (sim) ----------
+  function focusColor(kind){
+    if(kind==='buff' || kind==='heal') return COLOR.good;
+    if(kind==='shield') return COLOR.mana;
+    return COLOR.danger;
+  }
+
+  function drawFocusArrow(){
+    const f = state.focus;
+    if(!f || f.target===null || f.target===undefined) return;
+    const ax = slotX(f.actor)+SLOT_W/2, tx = slotX(f.target)+SLOT_W/2;
+    const col = focusColor(f.kind);
+    ctx.strokeStyle = col;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(ax, ARROW_Y);
+    ctx.quadraticCurveTo((ax+tx)/2, ARROW_Y-22, tx, ARROW_Y);
+    ctx.stroke();
+    ctx.beginPath();               // arrowhead into the target
+    ctx.moveTo(tx, ARROW_Y+6);
+    ctx.lineTo(tx-5, ARROW_Y-3);
+    ctx.lineTo(tx+5, ARROW_Y-3);
+    ctx.closePath();
+    ctx.fillStyle = col;
+    ctx.fill();
+    ctx.beginPath();               // origin dot
+    ctx.arc(ax, ARROW_Y, 3, 0, Math.PI*2);
+    ctx.fillStyle = col;
+    ctx.fill();
+  }
+
+  function drawExplain(){
+    ctx.font = "700 11px 'Manrope'";
+    ctx.fillStyle = COLOR.textFaint;
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.fillText('THIS ACTION', M, PANEL_Y-13);
+
+    rr(M, PANEL_Y, LW-2*M, PANEL_H, 9);
+    ctx.fillStyle = COLOR.surface2; ctx.fill();
+    ctx.strokeStyle = COLOR.line; ctx.lineWidth = 1.2; ctx.stroke();
+
+    const e = state.explain;
+    if(!e){
+      ctx.font = "600 13px 'Manrope'";
+      ctx.fillStyle = COLOR.textDim;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('Click Step to resolve slot 1.', LW/2, PANEL_Y+PANEL_H/2);
+      return;
+    }
+
+    const u = e.actor;
+    const C1 = M+18, C1W = 296;
+    const C2 = 372,  C2W = 528;
+    const C3 = 942,  C3W = LW-M-16-942;
+
+    [350, 918].forEach(dx=>{
+      ctx.beginPath();
+      ctx.moveTo(dx, PANEL_Y+14); ctx.lineTo(dx, PANEL_Y+PANEL_H-14);
+      ctx.strokeStyle = COLOR.lineSoft; ctx.lineWidth = 1; ctx.stroke();
+    });
+
+    // -- who is acting
+    glyphPath(u.glyph, C1+18, PANEL_Y+30, 14);
+    ctx.fillStyle = pcolor(u.owner); ctx.globalAlpha = 0.25; ctx.fill(); ctx.globalAlpha = 1;
+    ctx.strokeStyle = pcolor(u.owner); ctx.lineWidth = 1.6; ctx.stroke();
+
+    ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+    ctx.font = "700 15px 'Manrope'";
+    ctx.fillStyle = e.skipped ? COLOR.textFaint : COLOR.text;
+    ctx.fillText(u.name + (e.skipped ? ' — never acts' : ''), C1+44, PANEL_Y+23);
+    ctx.font = "700 11px 'JetBrains Mono'";
+    ctx.fillStyle = COLOR.textDim;
+    ctx.fillText('slot ' + (u.slot+1) + ' · ' + pname(u.owner) + ' · ' + atkOf(u) + ' ATK / ' + u.hp + ' HP', C1+44, PANEL_Y+40);
+    ctx.font = "500 11.5px 'Manrope'";
+    ctx.fillStyle = COLOR.textDim;
+    wrapText(e.rule, C1, PANEL_Y+68, C1W, 14, 4, 'left');
+
+    // -- who it weighed up
+    ctx.font = "700 10px 'Manrope'";
+    ctx.fillStyle = COLOR.textFaint;
+    ctx.fillText('CONSIDERED' + (e.pool ? ' — ' + e.pool : ''), C2, PANEL_Y+18);
+    if(!e.weighed.length){
+      ctx.font = "500 12px 'Manrope'";
+      ctx.fillStyle = COLOR.textFaint;
+      ctx.fillText(e.skipped ? '—' : 'nobody to choose from', C2, PANEL_Y+42);
+    }
+    e.weighed.forEach((c,i)=>{
+      const y = PANEL_Y+40 + i*19;
+      if(y > PANEL_Y+PANEL_H-10) return;
+      if(c.chosen){
+        rr(C2-8, y-9.5, C2W+12, 19, 5);
+        ctx.fillStyle = e.accent; ctx.globalAlpha = 0.14; ctx.fill(); ctx.globalAlpha = 1;
+        ctx.strokeStyle = e.accent; ctx.lineWidth = 1; ctx.stroke();
+      }
+      ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+      ctx.font = "700 10.5px 'JetBrains Mono'";
+      ctx.fillStyle = c.chosen ? pcolor(c.owner) : COLOR.textFaint;
+      ctx.fillText(String(c.slot+1).padStart(2,'0'), C2, y);
+      ctx.font = (c.chosen ? '700' : '500') + " 12px 'Manrope'";
+      ctx.fillStyle = c.chosen ? COLOR.text : COLOR.textDim;
+      ctx.fillText(c.name, C2+28, y);
+      ctx.font = "500 10.5px 'Manrope'";
+      ctx.fillStyle = COLOR.textFaint;
+      ctx.fillText(c.note, C2+164, y);
+      if(c.chosen){
+        ctx.textAlign = 'right';
+        ctx.font = "700 10px 'Manrope'";
+        ctx.fillStyle = e.accent;
+        ctx.fillText('PICKED', C2+C2W, y);
+      }
+    });
+
+    // -- what happened
+    ctx.textAlign = 'left';
+    ctx.font = "700 10px 'Manrope'";
+    ctx.fillStyle = COLOR.textFaint;
+    ctx.fillText('RESULT', C3, PANEL_Y+18);
+    let ry = PANEL_Y+40;
+    if(!e.outcome.length){
+      ctx.font = "500 12px 'Manrope'";
+      ctx.fillStyle = COLOR.textFaint;
+      ctx.fillText('—', C3, ry);
+    }
+    e.outcome.forEach(o=>{
+      if(ry > PANEL_Y+PANEL_H-14) return;
+      ctx.font = "600 12px 'Manrope'";
+      ctx.fillStyle = o.color;
+      const n = wrapText(o.text, C3, ry, C3W, 14, 3, 'left');
+      ry += n*14 + 4;
+    });
+  }
+
+  // ---------- scoreboard (round end) ----------
   function drawScoreboard(){
     ctx.font = "700 11px 'Manrope'";
     ctx.fillStyle = COLOR.textFaint;
@@ -768,8 +985,11 @@
 
     drawHeader();
     for(let i=0;i<SLOTS;i++) drawSlotCard(i);
+    if(state.phase==='sim') drawFocusArrow();
     drawBand();
-    if(state.phase==='stage') drawPalette(); else drawScoreboard();
+    if(state.phase==='stage') drawPalette();
+    else if(state.phase==='sim') drawExplain();
+    else drawScoreboard();
     drawLog();
   }
 
