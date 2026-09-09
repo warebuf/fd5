@@ -4,7 +4,7 @@
   // ---------- setup ----------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
-  const LW = 1300, LH = 680; // logical size
+  const LW = 1300, LH = 900; // logical size
   const REDUCE_MOTION = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   function fitCanvas(){
@@ -32,33 +32,85 @@
 
   // ---------- roster ----------
   const ROSTER = [
-    { key:'vanguard',    name:'Vanguard',    atk:3, hp:4, glyph:'melee',
-      short:'Hits earliest unresolved enemy',
+    { key:'soldier',     name:'Soldier',        atk:3, hp:4, mono:'SD',
+      short:'Attacks one enemy',
       action:'Attacks the enemy in the earliest unresolved slot.' },
-    { key:'blacksmith',  name:'Blacksmith',  atk:1, hp:4, glyph:'hammer',
-      short:'Next ally in line gets +3 ATK',
-      action:'Gives the next allied unit in the sequence +3 ATK this round.' },
-    { key:'assassin',    name:'Assassin',    atk:4, hp:2, glyph:'arcane',
-      short:'Hits latest unresolved enemy',
-      action:'Attacks the enemy in the latest unresolved slot.' },
-    { key:'guardian',    name:'Guardian',    atk:1, hp:6, glyph:'guard',
-      short:'Next ally to act is immune',
-      action:'The next allied unit to act takes no damage until its action.' },
-    { key:'medic',       name:'Medic',       atk:1, hp:3, glyph:'sacred',
-      short:'Heals worst-hurt ally 3, then hits',
-      action:'Heals the most damaged ally for 3, then attacks.' },
-    { key:'executioner', name:'Executioner', atk:2, hp:4, glyph:'axe',
-      short:'Hits worst-hurt enemy, +3 if hurt',
-      action:'Attacks the most damaged enemy; +3 damage if it is already injured.' }
+    { key:'shieldbearer',name:'Shieldbearer',   atk:0, hp:8, mono:'SH', taunt:true,
+      short:'Enemies attack it first',
+      action:'While alive, every single-target attack must hit it first. Takes no action of its own.' },
+    { key:'archer',      name:'Archer',         atk:2, hp:3, mono:'AR',
+      short:'Attacks the weakest enemy',
+      action:'Attacks the enemy with the lowest current HP.' },
+    { key:'wolf',        name:'Wolf',           atk:2, hp:3, mono:'WF',
+      short:'Attacks twice',
+      action:'Attacks the earliest unresolved enemy, twice.' },
+    { key:'ogre',        name:'Ogre',           atk:5, hp:5, mono:'OG',
+      short:'One enormous hit',
+      action:'Deals one large hit to the earliest unresolved enemy.' },
+    { key:'cleric',      name:'Cleric',         atk:1, hp:3, mono:'CL',
+      short:'Heals the most-hurt ally',
+      action:'Heals the most damaged ally.' },
+    { key:'berserker',   name:'Berserker',      atk:2, hp:5, mono:'BR',
+      short:'Hits harder when hurt',
+      action:'Attacks the earliest unresolved enemy; deals +1 damage per HP it has lost.' },
+    { key:'vampire',     name:'Vampire',        atk:3, hp:4, mono:'VM',
+      short:'Heals itself on attack',
+      action:'Attacks the earliest unresolved enemy and heals itself for the damage dealt.' },
+    { key:'bomber',      name:'Bomber',         atk:2, hp:3, mono:'BM', onDeath:'bomber',
+      short:'Explodes on death',
+      action:'Attacks the earliest unresolved enemy. Explodes when killed, damaging every enemy.' },
+    { key:'dragon',      name:'Dragon',         atk:2, hp:6, mono:'DR',
+      short:'Hits every enemy',
+      action:'Breathes fire on every living enemy.' },
+    { key:'slime',       name:'Slime',          atk:2, hp:6, mono:'SL', onDeath:'slime',
+      short:'Splits when killed',
+      action:'Attacks the earliest unresolved enemy. Splits into two smaller Slimes when killed, if there is room.' },
+    { key:'necromancer', name:'Necromancer',    atk:0, hp:3, mono:'NC',
+      short:'Revives a dead ally',
+      action:'Revives the earliest-fallen dead ally at half HP.' },
+    { key:'executioner', name:'Executioner',    atk:2, hp:4, mono:'EX',
+      short:'Executes a critical enemy',
+      action:'Instantly kills a critically injured enemy; otherwise strikes the earliest unresolved enemy.' },
+    { key:'phoenix',     name:'Phoenix',        atk:2, hp:4, mono:'PX', onDeath:'phoenix',
+      short:'Returns once from death',
+      action:'Attacks the earliest unresolved enemy. The first time it would die, it returns at half HP instead.' },
+    { key:'goblin',      name:'Goblin',         atk:1, hp:1, mono:'GB',
+      short:'Weak, cheap attacker',
+      action:'Attacks the earliest unresolved enemy. Cheap and fragile.' },
+    { key:'golem',       name:'Golem',          atk:3, hp:10, mono:'GL', noHeal:true,
+      short:"Durable, can't be healed",
+      action:'Extremely durable, but cannot be healed. Attacks the earliest unresolved enemy.' },
+    { key:'druid',       name:'Druid',          atk:1, hp:4, mono:'DU',
+      short:'Heals all allies a little',
+      action:'Gives every surviving ally a little health.' },
+    { key:'lightning_mage', name:'Lightning Mage', atk:2, hp:3, mono:'LM',
+      short:'Hits 3 random enemies',
+      action:'Strikes three random living enemies.' },
+    { key:'hunter',      name:'Hunter',         atk:3, hp:4, mono:'HN',
+      short:'Extra dmg to healthiest foe',
+      action:'Deals extra damage to the enemy with the most health.' },
+    { key:'king',        name:'King',           atk:0, hp:5, mono:'KG', auraAtk:2,
+      short:'+ATK to allies while alive',
+      action:'While alive, gives every other ally +2 ATK. Takes no action of its own.' }
   ];
   const BY_KEY = {};
   ROSTER.forEach(r=>{ BY_KEY[r.key] = r; });
 
   // ---------- rules constants ----------
-  const SLOTS = 10;          // 1..10, alternating ownership
-  const PER_SIDE = SLOTS/2;  // 5 slots each
+  const SLOTS = 6;           // 1..6, alternating ownership
+  const PER_SIDE = SLOTS/2;  // 3 slots each
   const WINS_NEEDED = 3;     // best of 5
   const STEP_MS = 850;
+
+  const BOMBER_DMG = 2;          // AoE damage a Bomber deals to every enemy on death
+  const EXECUTE_FRAC = 0.5;      // Executioner's "critically injured" threshold (fraction of max HP missing)
+  const HUNTER_BONUS = 3;        // Hunter's extra damage to the healthiest enemy
+  const LMAGE_HITS = 3;          // enemies a Lightning Mage strikes
+  const DRUID_HEAL = 2;          // Druid's AoE heal amount
+  const CLERIC_HEAL = 3;         // Cleric's single-target heal amount
+  const NECRO_REVIVE_FRAC = 0.5; // fraction of max HP a Necromancer revives at
+  const PHOENIX_REVIVE_FRAC = 0.5; // fraction of max HP a Phoenix returns at
+  const SLIME_SPLIT_DIV = 2;     // splinters get maxHp/atk divided by this
 
   // ---------- state ----------
   let uidCounter = 1;
@@ -92,29 +144,36 @@
 
   function makeUnit(key, owner, slot){
     const t = BY_KEY[key];
-    return { uid:'u'+(uidCounter++), key, name:t.name, glyph:t.glyph,
+    return { uid:'u'+(uidCounter++), key, name:t.name, mono:t.mono,
              baseAtk:t.atk, buff:0, hp:t.hp, maxHp:t.hp,
              owner, slot, acted:false, immune:false, dead:false,
+             taunt: !!t.taunt, noHeal: !!t.noHeal, auraAtk: t.auraAtk || 0, onDeath: t.onDeath || null,
+             phoenixUsed:false,
              flash:0, healFlash:0 };
   }
-  function atkOf(u){ return u.baseAtk + u.buff; }
   function missing(u){ return u.maxHp - u.hp; }
   function isAlive(u){ return !!u && !u.dead; }
   function aliveOf(owner){ return state.slots.filter(u=>isAlive(u) && u.owner===owner); }
   function enemiesOf(owner){ return state.slots.filter(u=>isAlive(u) && u.owner!==owner); }
   function stagedCount(owner){ return state.slots.filter(u=>u && u.owner===owner).length; }
 
+  function atkOf(u){
+    let bonus = u.buff;
+    const auraSrc = aliveOf(u.owner).find(x=>x.uid!==u.uid && x.auraAtk>0);
+    if(auraSrc) bonus += auraSrc.auraAtk;
+    return u.baseAtk + bonus;
+  }
+
   // ---------- targeting ----------
   // state.slots is already in slot order, so filtered lists are too.
-  function earliestUnresolvedEnemy(u){
-    const es = enemiesOf(u.owner);
-    return es.find(e=>!e.acted) || es[0] || null;
+  // A living Shieldbearer forces every single-target attack onto it; AoE and
+  // random multi-target abilities ignore that redirect.
+  function attackable(owner){
+    const es = enemiesOf(owner);
+    const taunters = es.filter(x=>x.taunt);
+    return taunters.length ? taunters : es;
   }
-  function latestUnresolvedEnemy(u){
-    const es = enemiesOf(u.owner);
-    const un = es.filter(e=>!e.acted);
-    return (un.length ? un[un.length-1] : es[es.length-1]) || null;
-  }
+  function healable(list){ return list.filter(x=>!x.noHeal); }
   function mostDamaged(list){
     const hurt = list.filter(x=>missing(x)>0);
     if(!hurt.length) return null;
@@ -122,12 +181,23 @@
     hurt.forEach(x=>{ if(missing(x) > missing(best)) best = x; }); // ties -> earliest slot
     return best;
   }
-  function nextAlly(u, mustBeUnresolved){
-    for(let i=u.slot+1;i<SLOTS;i++){
-      const x = state.slots[i];
-      if(isAlive(x) && x.owner===u.owner && (!mustBeUnresolved || !x.acted)) return x;
-    }
-    return null;
+  function weakest(list){
+    if(!list.length) return null;
+    let best = list[0];
+    list.forEach(x=>{ if(x.hp < best.hp) best = x; }); // ties -> earliest slot
+    return best;
+  }
+  function healthiest(list){
+    if(!list.length) return null;
+    let best = list[0];
+    list.forEach(x=>{ if(x.hp > best.hp) best = x; }); // ties -> earliest slot
+    return best;
+  }
+  function deadOf(owner){ return state.slots.filter(x=>x && x.owner===owner && x.dead); }
+  function emptyOwnSlots(owner){
+    const r = [];
+    for(let i=0;i<SLOTS;i++) if(!state.slots[i] && slotOwner(i)===owner) r.push(i);
+    return r;
   }
 
   // ---------- resolution ----------
@@ -145,6 +215,37 @@
       chosen: !!chosen && x.uid === chosen.uid
     }));
   }
+  function weighedMulti(list, chosenList, noteFn){
+    return list.map(x=>({
+      slot:x.slot, name:x.name, owner:x.owner,
+      note: noteFn ? noteFn(x) : '',
+      chosen: chosenList.some(c=>c.uid === x.uid)
+    }));
+  }
+
+  function doBomberDeath(target){
+    const foes = enemiesOf(target.owner);
+    if(!foes.length) return;
+    foes.forEach(f=>dealDamage(f, BOMBER_DMG));
+    out(target.name + ' detonates for ' + BOMBER_DMG + ' on every enemy.', COLOR.danger);
+  }
+
+  function doSlimeSplit(target){
+    const spots = emptyOwnSlots(target.owner).slice(0,2);
+    if(!spots.length){
+      out(target.name + ' has no room to split into.', COLOR.textFaint);
+      return;
+    }
+    const childHp = Math.max(1, Math.floor(target.maxHp / SLIME_SPLIT_DIV));
+    const childAtk = Math.max(1, Math.floor(target.baseAtk / SLIME_SPLIT_DIV));
+    spots.forEach(idx=>{
+      const s = makeUnit('slime', target.owner, idx);
+      s.maxHp = childHp; s.hp = childHp; s.baseAtk = childAtk;
+      s.onDeath = null; // splinters don't split further
+      state.slots[idx] = s;
+    });
+    out(target.name + ' splits into ' + spots.length + ' smaller Slimes.', COLOR.good);
+  }
 
   function dealDamage(target, amount){
     if(target.immune){
@@ -155,8 +256,17 @@
     target.flash = 1;
     if(target.hp <= 0){
       target.hp = 0;
+      if(target.onDeath === 'phoenix' && !target.phoenixUsed){
+        target.phoenixUsed = true;
+        target.hp = Math.max(1, Math.ceil(target.maxHp * PHOENIX_REVIVE_FRAC));
+        target.healFlash = 1;
+        out(target.name + ' (slot ' + (target.slot+1) + ') rises from the ashes at ' + target.hp + ' HP.', COLOR.mana);
+        return;
+      }
       target.dead = true;
       out(target.name + ' (slot ' + (target.slot+1) + ') dies.', COLOR.danger);
+      if(target.onDeath === 'bomber') doBomberDeath(target);
+      else if(target.onDeath === 'slime') doSlimeSplit(target);
     }
   }
 
@@ -175,92 +285,289 @@
     log('Slot ' + (u.slot+1) + ' — ' + pname(u.owner) + "'s " + u.name + ' acts.', pcolor(u.owner));
 
     switch(u.key){
-      case 'vanguard': {
-        const es = enemiesOf(u.owner);
+      case 'soldier': {
+        const es = attackable(u.owner);
         const t = es.find(x=>!x.acted) || es[0] || null;
-        e.rule = 'Hits the enemy in the EARLIEST unresolved slot — denying an action that has not happened yet.';
+        e.rule = 'Hits the enemy in the EARLIEST unresolved slot.' + (es.length && es[0].taunt ? ' A Shieldbearer is forcing the redirect.' : '');
+        e.pool = (es.length && es[0].taunt) ? 'must strike the taunting Shieldbearer' : 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'strikes');
+        break;
+      }
+
+      case 'shieldbearer': {
+        e.rule = 'Enemies must attack it first, for as long as it lives. Takes no action of its own.';
+        e.pool = '';
+        e.weighed = [];
+        out('holds the line — no direct action.', COLOR.textFaint);
+        break;
+      }
+
+      case 'archer': {
+        const es = attackable(u.owner);
+        const t = weakest(es);
+        e.rule = 'Attacks the WEAKEST enemy by current HP.';
+        e.pool = 'living enemies';
+        e.weighed = weighed(es, t, x=>x.hp + ' HP');
+        attack(u, t, atkOf(u), 'shoots');
+        break;
+      }
+
+      case 'wolf': {
+        const es1 = attackable(u.owner);
+        const t1 = es1.find(x=>!x.acted) || es1[0] || null;
+        e.rule = 'Attacks the earliest unresolved enemy, TWICE.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es1, t1, x=>x.acted ? 'already acted' : 'unresolved');
+        const hitSlots = [];
+        if(t1){
+          hitSlots.push(t1.slot);
+          out('bites ' + t1.name + ' (slot ' + (t1.slot+1) + ') for ' + atkOf(u) + '.', pcolor(u.owner));
+          dealDamage(t1, atkOf(u));
+        }
+        const es2 = attackable(u.owner);
+        const t2 = es2.find(x=>!x.acted) || es2[0] || null;
+        if(t2){
+          hitSlots.push(t2.slot);
+          out('bites again — ' + t2.name + ' (slot ' + (t2.slot+1) + ') for ' + atkOf(u) + '.', pcolor(u.owner));
+          dealDamage(t2, atkOf(u));
+        }
+        if(!hitSlots.length) out('no target — the action fizzles.', COLOR.textFaint);
+        state.focus.target = hitSlots.length ? hitSlots : null;
+        state.focus.kind = 'hit';
+        break;
+      }
+
+      case 'ogre': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Deals ONE ENORMOUS hit to the earliest unresolved enemy.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'crushes');
+        break;
+      }
+
+      case 'cleric': {
+        const allies = aliveOf(u.owner);
+        const candidates = healable(allies);
+        const a = mostDamaged(candidates);
+        e.accent = COLOR.good;
+        e.rule = 'Heals the MOST DAMAGED ally for ' + CLERIC_HEAL + '.';
+        e.pool = 'living, healable allies';
+        e.weighed = weighed(allies, a, x=>x.noHeal ? 'cannot be healed' : (missing(x) ? ('hurt −' + missing(x) + ' HP') : 'unhurt'));
+        if(a){
+          const before = a.hp;
+          a.hp = Math.min(a.maxHp, a.hp + CLERIC_HEAL);
+          a.healFlash = 1;
+          state.focus.target = a.slot;
+          state.focus.kind = 'heal';
+          out('heals ' + a.name + ' (slot ' + (a.slot+1) + ') for ' + (a.hp-before) + '.', COLOR.good);
+        } else {
+          out('nobody needs healing.', COLOR.textFaint);
+        }
+        break;
+      }
+
+      case 'berserker': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        const bonus = missing(u);
+        e.rule = 'Attacks the earliest unresolved enemy; deals +1 damage per HP it has lost.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u) + bonus, bonus ? 'rages and strikes' : 'strikes');
+        break;
+      }
+
+      case 'vampire': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.accent = COLOR.good;
+        e.rule = 'Attacks the earliest unresolved enemy and heals itself for the damage dealt.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        if(t){
+          state.focus.target = t.slot;
+          state.focus.kind = 'hit';
+          const dmg = atkOf(u);
+          const wasImmune = t.immune;
+          out('drains ' + t.name + ' (slot ' + (t.slot+1) + ') for ' + dmg + '.', pcolor(u.owner));
+          dealDamage(t, dmg);
+          if(!wasImmune){
+            const before = u.hp;
+            u.hp = Math.min(u.maxHp, u.hp + dmg);
+            if(u.hp > before){ u.healFlash = 1; out('heals itself for ' + (u.hp-before) + '.', COLOR.good); }
+          }
+        } else {
+          out('no target — the action fizzles.', COLOR.textFaint);
+        }
+        break;
+      }
+
+      case 'bomber': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Attacks the earliest unresolved enemy; explodes on death, damaging every enemy.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'lobs a charge at');
+        break;
+      }
+
+      case 'dragon': {
+        const es = enemiesOf(u.owner); // AoE ignores taunt
+        e.rule = 'Breathes fire on EVERY living enemy.';
+        e.pool = 'living enemies';
+        e.weighed = weighedMulti(es, es, ()=>'hit for ' + atkOf(u));
+        state.focus.target = es.map(x=>x.slot);
+        state.focus.kind = 'hit';
+        if(es.length){
+          es.forEach(x=>dealDamage(x, atkOf(u)));
+          out('breathes fire across the field for ' + atkOf(u) + ' each.', pcolor(u.owner));
+        } else {
+          out('no enemies left to burn.', COLOR.textFaint);
+        }
+        break;
+      }
+
+      case 'slime': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Attacks the earliest unresolved enemy; splits into two smaller Slimes if killed.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'slams');
+        break;
+      }
+
+      case 'necromancer': {
+        const dead = deadOf(u.owner);
+        const t = dead[0] || null;
+        e.accent = COLOR.good;
+        e.rule = 'Revives the EARLIEST fallen ally at half HP.';
+        e.pool = dead.length ? 'fallen allies, lowest slot first' : 'no fallen allies';
+        e.weighed = weighed(dead, t, x=>'slot ' + (x.slot+1));
+        if(t){
+          t.dead = false;
+          t.hp = Math.max(1, Math.ceil(t.maxHp * NECRO_REVIVE_FRAC));
+          t.healFlash = 1;
+          state.focus.target = t.slot;
+          state.focus.kind = 'heal';
+          out('calls ' + t.name + ' (slot ' + (t.slot+1) + ') back to ' + t.hp + ' HP.', COLOR.good);
+        } else {
+          out('no fallen ally to revive.', COLOR.textFaint);
+        }
+        break;
+      }
+
+      case 'executioner': {
+        const es = attackable(u.owner);
+        const critical = es.filter(x=>missing(x) >= x.maxHp * EXECUTE_FRAC);
+        const t = critical[0] || null;
+        e.rule = 'Instantly kills an enemy at or below ' + Math.round(EXECUTE_FRAC*100) + '% HP; otherwise strikes the earliest unresolved enemy.';
+        if(t){
+          e.pool = 'critically injured enemies';
+          e.weighed = weighed(es, t, x=>missing(x) >= x.maxHp*EXECUTE_FRAC ? 'critical' : (x.acted ? 'already acted' : 'unresolved'));
+          state.focus.target = t.slot;
+          state.focus.kind = 'hit';
+          out('executes ' + t.name + ' (slot ' + (t.slot+1) + ').', COLOR.danger);
+          dealDamage(t, t.hp);
+        } else {
+          const fallback = es.find(x=>!x.acted) || es[0] || null;
+          e.pool = 'nobody critical — falls back to the earliest slot';
+          e.weighed = weighed(es, fallback, x=>x.acted ? 'already acted' : 'unresolved');
+          attack(u, fallback, atkOf(u), 'strikes');
+        }
+        break;
+      }
+
+      case 'phoenix': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Attacks the earliest unresolved enemy; returns once at half HP if it would die.';
         e.pool = 'living enemies, lowest slot first';
         e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
         attack(u, t, atkOf(u), 'strikes');
         break;
       }
 
-      case 'assassin': {
-        const es = enemiesOf(u.owner);
-        const un = es.filter(x=>!x.acted);
-        const t = (un.length ? un[un.length-1] : es[es.length-1]) || null;
-        e.rule = 'Hits the enemy in the LATEST unresolved slot — reaching past the front line to kill a late payoff.';
-        e.pool = 'living enemies, highest slot first';
+      case 'goblin': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Weak and cheap. Attacks the earliest unresolved enemy.';
+        e.pool = 'living enemies, lowest slot first';
         e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
-        attack(u, t, atkOf(u), 'strikes the latest unresolved,');
+        attack(u, t, atkOf(u), 'jabs');
         break;
       }
 
-      case 'executioner': {
-        const es = enemiesOf(u.owner);
-        const wounded = mostDamaged(es);
-        const t = wounded || es.find(x=>!x.acted) || es[0] || null;
-        e.rule = 'Hits the MOST DAMAGED enemy, for +3 if it is already injured. Wants damage dealt earlier in the sequence.';
-        e.pool = wounded ? 'wounded enemies' : 'nobody is wounded — falls back to the earliest slot, no bonus';
-        e.weighed = weighed(es, t, x=>missing(x) ? ('hurt −' + missing(x) + ' HP') : 'unhurt');
-        attack(u, t, atkOf(u) + (wounded ? 3 : 0), wounded ? 'executes the wounded' : 'finds nobody wounded and strikes');
+      case 'golem': {
+        const es = attackable(u.owner);
+        const t = es.find(x=>!x.acted) || es[0] || null;
+        e.rule = 'Extremely durable, but cannot be healed. Attacks the earliest unresolved enemy.';
+        e.pool = 'living enemies, lowest slot first';
+        e.weighed = weighed(es, t, x=>x.acted ? 'already acted' : 'unresolved');
+        attack(u, t, atkOf(u), 'smashes');
         break;
       }
 
-      case 'blacksmith': {
-        const pool = state.slots.filter(x=>isAlive(x) && x.owner===u.owner && x.slot > u.slot);
-        const a = pool[0] || null;
-        e.accent = COLOR.good;
-        e.rule = 'Gives the NEXT allied unit in the sequence +3 ATK for this round. Setup that only pays off if an ally acts later.';
-        e.pool = 'living allies in later slots';
-        e.weighed = weighed(pool, a, x=>'slot ' + (x.slot+1));
-        if(a){
-          a.buff += 3;
-          state.focus.target = a.slot;
-          state.focus.kind = 'buff';
-          out('forges +3 ATK onto ' + a.name + ' (slot ' + (a.slot+1) + ') — now ' + atkOf(a) + ' ATK.', COLOR.good);
-        } else {
-          out('no ally later in the sequence — the buff is wasted.', COLOR.textFaint);
-        }
-        break;
-      }
-
-      case 'guardian': {
-        const pool = state.slots.filter(x=>isAlive(x) && x.owner===u.owner && x.slot > u.slot && !x.acted);
-        const a = pool[0] || null;
-        e.accent = COLOR.mana;
-        e.rule = 'The NEXT allied unit to act takes no damage until its own action. Carries a fragile piece to its slot.';
-        e.pool = 'living allies still to act';
-        e.weighed = weighed(pool, a, x=>'slot ' + (x.slot+1));
-        if(a){
-          a.immune = true;
-          state.focus.target = a.slot;
-          state.focus.kind = 'shield';
-          out('shields ' + a.name + ' (slot ' + (a.slot+1) + ') until it acts.', COLOR.mana);
-        } else {
-          out('no ally left to shield.', COLOR.textFaint);
-        }
-        break;
-      }
-
-      case 'medic': {
+      case 'druid': {
         const allies = aliveOf(u.owner);
-        const a = mostDamaged(allies); // itself counts as an ally
+        const candidates = healable(allies);
         e.accent = COLOR.good;
-        e.rule = 'Heals the MOST DAMAGED ally for 3 (itself included), then attacks. Wants to act after the enemy has dealt damage.';
-        e.pool = 'living allies';
-        e.weighed = weighed(allies, a, x=>missing(x) ? ('hurt −' + missing(x) + ' HP') : 'unhurt');
-        if(a){
-          const before = a.hp;
-          a.hp = Math.min(a.maxHp, a.hp + 3);
-          a.healFlash = 1;
-          state.focus.target = a.slot;
-          state.focus.kind = 'heal';
-          out('heals ' + a.name + ' (slot ' + (a.slot+1) + ') for ' + (a.hp-before) + '.', COLOR.good);
-        } else {
-          out('nobody is wounded — no heal.', COLOR.textFaint);
+        e.rule = 'Gives every surviving ally +' + DRUID_HEAL + ' HP.';
+        e.pool = 'living, healable allies';
+        e.weighed = weighedMulti(allies, candidates, x=>x.noHeal ? 'cannot be healed' : (missing(x) ? ('hurt −' + missing(x) + ' HP') : 'full HP'));
+        state.focus.target = candidates.map(x=>x.slot);
+        state.focus.kind = 'heal';
+        candidates.forEach(x=>{
+          const before = x.hp;
+          x.hp = Math.min(x.maxHp, x.hp + DRUID_HEAL);
+          if(x.hp > before) x.healFlash = 1;
+        });
+        out('blesses the ranks for +' + DRUID_HEAL + ' HP each.', COLOR.good);
+        break;
+      }
+
+      case 'lightning_mage': {
+        const es = enemiesOf(u.owner); // ignores taunt — a scattershot, not a targeted strike
+        const pool = es.slice();
+        for(let i=pool.length-1;i>0;i--){
+          const j = Math.floor(Math.random()*(i+1));
+          const tmp = pool[i]; pool[i] = pool[j]; pool[j] = tmp;
         }
-        attack(u, earliestUnresolvedEnemy(u), atkOf(u), 'then strikes');
+        const chosen = pool.slice(0, Math.min(LMAGE_HITS, pool.length));
+        e.rule = 'Strikes ' + LMAGE_HITS + ' RANDOM living enemies.';
+        e.pool = 'living enemies, rolled at random';
+        e.weighed = weighedMulti(es, chosen, ()=>'rolled');
+        state.focus.target = chosen.map(x=>x.slot);
+        state.focus.kind = 'hit';
+        if(chosen.length){
+          chosen.forEach(x=>dealDamage(x, atkOf(u)));
+          out('calls down lightning on ' + chosen.length + ' enem' + (chosen.length===1?'y':'ies') + ' for ' + atkOf(u) + ' each.', pcolor(u.owner));
+        } else {
+          out('no enemies left to strike.', COLOR.textFaint);
+        }
+        break;
+      }
+
+      case 'hunter': {
+        const es = attackable(u.owner);
+        const t = healthiest(es);
+        e.rule = 'Deals +' + HUNTER_BONUS + ' damage to the enemy with the MOST health.';
+        e.pool = 'living enemies';
+        e.weighed = weighed(es, t, x=>x.hp + ' HP');
+        attack(u, t, atkOf(u) + (t ? HUNTER_BONUS : 0), 'hunts down');
+        break;
+      }
+
+      case 'king': {
+        e.accent = COLOR.good;
+        e.rule = 'While alive, gives every other ally +2 ATK. Takes no action of its own.';
+        e.pool = '';
+        e.weighed = [];
+        out('rallies the ranks — no direct action.', COLOR.textFaint);
         break;
       }
     }
@@ -343,7 +650,7 @@
     state.matchWinner = null;
     state.phase = 'stage';
     state.log = [];
-    log('Both sides stage in secret, then the sequence resolves 1 through 10.', COLOR.textDim);
+    log('Both sides stage in secret, then the sequence resolves 1 through ' + SLOTS + '.', COLOR.textDim);
     log('Round 1 — slot 1 belongs to ' + pname(slotOwner(0)) + '.', COLOR.text);
   }
 
@@ -411,53 +718,52 @@
     return lines.length;
   }
 
-  function glyphPath(type, cx, cy, s){
+  // Every unit is drawn as a two-letter monogram badge rather than a
+  // hand-drawn icon — the roster is too large now for bespoke glyphs per
+  // unit, and the badge scales cleanly from tiny palette chips to slot cards.
+  function drawBadge(cx, cy, r, letters, color, fillMul){
+    const baseAlpha = ctx.globalAlpha;
     ctx.beginPath();
-    switch(type){
-      case 'melee':
-        ctx.moveTo(cx, cy-s); ctx.lineTo(cx+s*0.55, cy+s*0.7); ctx.lineTo(cx, cy+s*0.35); ctx.lineTo(cx-s*0.55, cy+s*0.7); ctx.closePath();
-        break;
-      case 'guard':
-        ctx.moveTo(cx, cy-s); ctx.lineTo(cx+s*0.8, cy-s*0.45); ctx.lineTo(cx+s*0.8, cy+s*0.25); ctx.quadraticCurveTo(cx+s*0.8, cy+s*0.9, cx, cy+s*1.05);
-        ctx.quadraticCurveTo(cx-s*0.8, cy+s*0.9, cx-s*0.8, cy+s*0.25); ctx.lineTo(cx-s*0.8, cy-s*0.45); ctx.closePath();
-        break;
-      case 'arcane':
-        ctx.moveTo(cx, cy-s*1.05); ctx.quadraticCurveTo(cx+s*0.85, cy-s*0.1, cx, cy+s*1.0); ctx.quadraticCurveTo(cx-s*0.5, cy+s*0.2, cx, cy-s*1.05);
-        break;
-      case 'sacred':
-        ctx.moveTo(cx-s*0.22, cy-s); ctx.lineTo(cx+s*0.22, cy-s); ctx.lineTo(cx+s*0.22, cy-s*0.22); ctx.lineTo(cx+s, cy-s*0.22);
-        ctx.lineTo(cx+s, cy+s*0.22); ctx.lineTo(cx+s*0.22, cy+s*0.22); ctx.lineTo(cx+s*0.22, cy+s); ctx.lineTo(cx-s*0.22, cy+s);
-        ctx.lineTo(cx-s*0.22, cy+s*0.22); ctx.lineTo(cx-s, cy+s*0.22); ctx.lineTo(cx-s, cy-s*0.22); ctx.lineTo(cx-s*0.22, cy-s*0.22);
-        ctx.closePath();
-        break;
-      case 'hammer':
-        ctx.moveTo(cx-s*0.9, cy-s*0.95); ctx.lineTo(cx+s*0.9, cy-s*0.95); ctx.lineTo(cx+s*0.9, cy-s*0.2);
-        ctx.lineTo(cx+s*0.25, cy-s*0.2); ctx.lineTo(cx+s*0.25, cy+s*1.05); ctx.lineTo(cx-s*0.25, cy+s*1.05);
-        ctx.lineTo(cx-s*0.25, cy-s*0.2); ctx.lineTo(cx-s*0.9, cy-s*0.2); ctx.closePath();
-        break;
-      case 'axe':
-        ctx.moveTo(cx-s*0.15, cy-s*1.0); ctx.quadraticCurveTo(cx+s*1.0, cy-s*0.95, cx+s*0.85, cy+s*0.1);
-        ctx.quadraticCurveTo(cx+s*0.3, cy-s*0.15, cx+s*0.12, cy+s*0.2);
-        ctx.lineTo(cx+s*0.12, cy+s*1.05); ctx.lineTo(cx-s*0.18, cy+s*1.05); ctx.closePath();
-        break;
-    }
+    ctx.arc(cx, cy, r, 0, Math.PI*2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = baseAlpha * (fillMul!=null ? fillMul : 0.25);
+    ctx.fill();
+    ctx.globalAlpha = baseAlpha;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.font = "700 " + Math.max(7, Math.round(r*0.78)) + "px 'Manrope'";
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(letters, cx, cy+0.5);
   }
 
   // ---------- layout ----------
+  // Each team gets its own row: the opponent's slots on top, the player's
+  // slots on the bottom. A lane (column) always holds the same pair of slot
+  // numbers (0,1 / 2,3 / 4,5) — only which row a given slot's card renders
+  // in swaps as slotOwner() flips each round.
   const M = 14;
-  const ARROW_Y = 90;                    // lane for the actor -> target arc
-  const RAIL_Y = 96, SLOT_W = 110, SLOT_H = 158, SLOT_GAP = 19;
-  const BAND_Y = RAIL_Y + SLOT_H + 14;   // 268 — ready / sim controls
+  const SLOT_W = 210, SLOT_H = 170, SLOT_GAP = 28;
+  const ROW_W = PER_SIDE*SLOT_W + (PER_SIDE-1)*SLOT_GAP;
+  const ROW_X0 = (LW - ROW_W) / 2;
+  const ROW_TOP_Y = 96;                              // opponent's row
+  const ROW_GAP_Y = 58;                              // room for the attack arc between rows
+  const ROW_BOT_Y = ROW_TOP_Y + SLOT_H + ROW_GAP_Y;  // player's row
+  const BAND_Y = ROW_BOT_Y + SLOT_H + 14;            // ready / sim controls
   const BAND_H = 40;
-  const PANEL_Y = BAND_Y + BAND_H + 22;  // 330 — palette, readout or scoreboard
-  const PANEL_H = 132;
-  const LOG_Y = PANEL_Y + PANEL_H + 14;  // 476
+  const PANEL_Y = BAND_Y + BAND_H + 22;              // palette, readout or scoreboard
+  const PANEL_H = 150;                               // taller: the roster grid is now 20 chips, 10x2
+  const LOG_Y = PANEL_Y + PANEL_H + 14;
   const LOG_H = LH - LOG_Y - M;
 
   let hitRegions = [];
   function pushHit(x,y,w,h,fn){ hitRegions.push({x,y,w,h,fn}); }
   function pointIn(r,px,py){ return px>=r.x && px<=r.x+r.w && py>=r.y && py<=r.y+r.h; }
-  function slotX(i){ return M + i*(SLOT_W+SLOT_GAP); }
+  function laneOf(i){ return Math.floor(i/2); }
+  function isTopRow(i){ return slotOwner(i) === 1; }  // owner 1 = opponent, drawn on top
+  function cardX(i){ return ROW_X0 + laneOf(i)*(SLOT_W+SLOT_GAP); }
+  function cardY(i){ return isTopRow(i) ? ROW_TOP_Y : ROW_BOT_Y; }
 
   function drawButton(x,y,w,h,label,opts){
     opts = opts||{};
@@ -490,10 +796,11 @@
 
   // ---------- slot rendering ----------
   function drawSlotCard(i){
-    const x = slotX(i), y = RAIL_Y, owner = slotOwner(i), col = pcolor(owner);
+    const x = cardX(i), y = cardY(i), owner = slotOwner(i), col = pcolor(owner);
     const u = state.slots[i];
     const isActor  = state.focus && state.focus.actor === i;
-    const isTarget = state.focus && state.focus.target === i;
+    const isTarget = state.focus && state.focus.target!=null &&
+      (Array.isArray(state.focus.target) ? state.focus.target.includes(i) : state.focus.target === i);
     const resolved = state.phase!=='stage' && i < state.simIndex;
 
     // body
@@ -551,15 +858,9 @@
     if(u.dead) ctx.globalAlpha = 0.32;
     else if(resolved) ctx.globalAlpha = 0.62;
 
-    // glyph
+    // badge
     const cx = x + SLOT_W/2, gy = y + 46;
-    glyphPath(u.glyph, cx, gy, 14);
-    ctx.fillStyle = col;
-    ctx.globalAlpha *= 0.28;
-    ctx.fill();
-    ctx.globalAlpha = u.dead ? 0.32 : (resolved ? 0.62 : 1);
-    ctx.strokeStyle = col; ctx.lineWidth = 1.6;
-    ctx.stroke();
+    drawBadge(cx, gy, 15, u.mono, col, 0.24);
 
     // name
     ctx.font = "700 12px 'Manrope'";
@@ -569,7 +870,7 @@
 
     // stats
     const pw = 42;
-    statPill(cx-pw-3, y+86, pw, 18, 'A', atkOf(u), u.buff ? COLOR.good : COLOR.textDim);
+    statPill(cx-pw-3, y+86, pw, 18, 'A', atkOf(u), atkOf(u) > u.baseAtk ? COLOR.good : COLOR.textDim);
     statPill(cx+3,    y+86, pw, 18, 'H', u.hp,     missing(u) ? COLOR.danger : COLOR.textDim);
 
     // action reminder
@@ -593,9 +894,12 @@
     };
     if(u.dead) badge('DEAD', COLOR.danger);
     else {
-      if(u.buff)   badge('+' + u.buff, COLOR.good);
-      if(u.immune) badge('SHIELD', COLOR.mana);
-      if(resolved && !u.dead) badge('DONE', COLOR.textFaint);
+      if(atkOf(u) > u.baseAtk) badge('+' + (atkOf(u)-u.baseAtk), COLOR.good);
+      if(u.immune)  badge('SHIELD', COLOR.mana);
+      if(u.taunt)   badge('TAUNT', COLOR.danger);
+      if(u.noHeal)  badge('NO HEAL', COLOR.textFaint);
+      if(u.auraAtk) badge('AURA', COLOR.good);
+      if(resolved)  badge('DONE', COLOR.textFaint);
     }
 
     if(u.dead){
@@ -619,7 +923,7 @@
 
     ctx.font = "500 11px 'Manrope'";
     ctx.fillStyle = COLOR.textFaint;
-    ctx.fillText('simultaneous staging · slot order resolves 1 → 10', M+152, 33);
+    ctx.fillText('simultaneous staging · slot order resolves 1 → ' + SLOTS, M+152, 33);
 
     // score
     const boxW = 190, bx = LW - M - boxW;
@@ -742,37 +1046,39 @@
     ctx.font = "700 11px 'Manrope'";
     ctx.fillStyle = COLOR.textFaint;
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-    ctx.fillText('ROSTER — both sides draw from the same six, duplicates allowed', M, PANEL_Y-14);
+    ctx.fillText('ROSTER — both sides draw from the same twenty, duplicates allowed', M, PANEL_Y-14);
 
-    const n = ROSTER.length, gap = 16;
-    const w = Math.floor((LW - 2*M - (n-1)*gap) / n);
+    const cols = 10, rows = 2, gapX = 8, gapY = 8;
+    const chipW = (LW - 2*M - (cols-1)*gapX) / cols;
+    const chipH = (PANEL_H - (rows-1)*gapY) / rows;
+
     ROSTER.forEach((t,i)=>{
-      const x = M + i*(w+gap), y = PANEL_Y, h = PANEL_H;
+      const col = i % cols, row = Math.floor(i/cols);
+      const x = M + col*(chipW+gapX), y = PANEL_Y + row*(chipH+gapY);
       const sel = state.picked === t.key;
-      rr(x,y,w,h,9);
+      rr(x,y,chipW,chipH,7);
       ctx.fillStyle = sel ? COLOR.surface3 : COLOR.surface2;
       ctx.fill();
       ctx.strokeStyle = sel ? COLOR.mana : COLOR.line;
-      ctx.lineWidth = sel ? 2 : 1.2;
+      ctx.lineWidth = sel ? 2 : 1.1;
       ctx.stroke();
 
-      glyphPath(t.glyph, x+26, y+26, 13);
-      ctx.fillStyle = COLOR.mana; ctx.globalAlpha = 0.22; ctx.fill(); ctx.globalAlpha = 1;
-      ctx.strokeStyle = COLOR.mana; ctx.lineWidth = 1.5; ctx.stroke();
+      drawBadge(x+17, y+18, 11, t.mono, COLOR.mana, 0.2);
 
-      ctx.font = "700 13.5px 'Manrope'";
+      ctx.font = "700 10.5px 'Manrope'";
       ctx.fillStyle = COLOR.text;
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-      ctx.fillText(t.name, x+48, y+20);
-      ctx.font = "700 11px 'JetBrains Mono'";
-      ctx.fillStyle = COLOR.textDim;
-      ctx.fillText(t.atk + ' ATK / ' + t.hp + ' HP', x+48, y+37);
+      ctx.fillText(t.name, x+32, y+13);
 
-      ctx.font = "500 10.5px 'Manrope'";
+      ctx.font = "700 9px 'JetBrains Mono'";
       ctx.fillStyle = COLOR.textDim;
-      wrapText(t.action, x+12, y+66, w-24, 13, 4, 'left');
+      ctx.fillText(t.atk + '/' + t.hp, x+32, y+27);
 
-      pushHit(x,y,w,h, ()=>{ state.picked = sel ? null : t.key; });
+      ctx.font = "500 8.5px 'Manrope'";
+      ctx.fillStyle = COLOR.textFaint;
+      wrapText(t.short, x+chipW/2, y+chipH-19, chipW-10, 10, 2, 'center');
+
+      pushHit(x,y,chipW,chipH, ()=>{ state.picked = sel ? null : t.key; });
     });
   }
 
@@ -783,28 +1089,70 @@
     return COLOR.danger;
   }
 
+  function drawArrowHead(tipX, tipY, ux, uy, color){
+    // ux,uy: unit vector pointing in the direction of travel, tip-ward
+    const px = -uy, py = ux;
+    const bx = tipX - ux*9, by = tipY - uy*9;
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(bx+px*5, by+py*5);
+    ctx.lineTo(bx-px*5, by-py*5);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
   function drawFocusArrow(){
     const f = state.focus;
     if(!f || f.target===null || f.target===undefined) return;
-    const ax = slotX(f.actor)+SLOT_W/2, tx = slotX(f.target)+SLOT_W/2;
-    const col = focusColor(f.kind);
+    const targets = Array.isArray(f.target) ? f.target : [f.target];
+    targets.forEach(t=>drawOneArrow(f.actor, t, f.kind));
+  }
+
+  function drawOneArrow(a, t, kind){
+    const col = focusColor(kind);
+    const ax = cardX(a)+SLOT_W/2, tx = cardX(t)+SLOT_W/2;
     ctx.strokeStyle = col;
     ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(ax, ARROW_Y);
-    ctx.quadraticCurveTo((ax+tx)/2, ARROW_Y-22, tx, ARROW_Y);
-    ctx.stroke();
-    ctx.beginPath();               // arrowhead into the target
-    ctx.moveTo(tx, ARROW_Y+6);
-    ctx.lineTo(tx-5, ARROW_Y-3);
-    ctx.lineTo(tx+5, ARROW_Y-3);
-    ctx.closePath();
-    ctx.fillStyle = col;
-    ctx.fill();
-    ctx.beginPath();               // origin dot
-    ctx.arc(ax, ARROW_Y, 3, 0, Math.PI*2);
-    ctx.fillStyle = col;
-    ctx.fill();
+
+    if(isTopRow(a) === isTopRow(t)){
+      // same team, same row (buff / heal / shield) — a small arc that dips
+      // just outside that row, same as a single-row layout would draw it.
+      const rowY = cardY(a);
+      const baseY = rowY - 6, peakY = rowY - 28;
+      ctx.beginPath();
+      ctx.moveTo(ax, baseY);
+      ctx.quadraticCurveTo((ax+tx)/2, peakY, tx, baseY);
+      ctx.stroke();
+      ctx.beginPath();             // arrowhead into the target
+      ctx.moveTo(tx, baseY+6);
+      ctx.lineTo(tx-5, baseY-3);
+      ctx.lineTo(tx+5, baseY-3);
+      ctx.closePath();
+      ctx.fillStyle = col;
+      ctx.fill();
+      ctx.beginPath();             // origin dot
+      ctx.arc(ax, baseY, 3, 0, Math.PI*2);
+      ctx.fillStyle = col;
+      ctx.fill();
+    } else {
+      // attack across the gap between the two rows.
+      const gapTop = ROW_TOP_Y + SLOT_H, gapBot = ROW_BOT_Y;
+      const ay = isTopRow(a) ? gapTop+4 : gapBot-4;
+      const ty = isTopRow(t) ? gapTop+4 : gapBot-4;
+      const midY = (gapTop + gapBot) / 2;
+      ctx.beginPath();
+      ctx.moveTo(ax, ay);
+      ctx.quadraticCurveTo((ax+tx)/2, midY, tx, ty);
+      ctx.stroke();
+      const dx = tx - (ax+tx)/2, dy = ty - midY;
+      const len = Math.hypot(dx,dy) || 1;
+      drawArrowHead(tx, ty, dx/len, dy/len, col);
+      ctx.beginPath();             // origin dot
+      ctx.arc(ax, ay, 3, 0, Math.PI*2);
+      ctx.fillStyle = col;
+      ctx.fill();
+    }
   }
 
   function drawExplain(){
@@ -838,9 +1186,7 @@
     });
 
     // -- who is acting
-    glyphPath(u.glyph, C1+18, PANEL_Y+30, 14);
-    ctx.fillStyle = pcolor(u.owner); ctx.globalAlpha = 0.25; ctx.fill(); ctx.globalAlpha = 1;
-    ctx.strokeStyle = pcolor(u.owner); ctx.lineWidth = 1.6; ctx.stroke();
+    drawBadge(C1+18, PANEL_Y+30, 14, u.mono, pcolor(u.owner), 0.25);
 
     ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
     ctx.font = "700 15px 'Manrope'";
